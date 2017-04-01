@@ -1,0 +1,14 @@
+module Main
+
+import Effects
+import Effect.StdIO
+import Effect.System
+import Effect.State
+import Effect.Random
+
+
+genLoop : Eff () [STDIO]
+genLoop = ?genLoop_rhs
+
+main : IO ()
+main = run genLoop
