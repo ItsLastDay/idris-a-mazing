@@ -45,25 +45,27 @@ natToVertex n m x = (x `div` m, x `mod` m)
 
 
 
-generateGrid : (n : Nat) -> (m : Nat) -> Effects.SimpleEff.Eff (MazeGrid n m) [RND] 
+generateGrid : (n : Nat) -> (m : Nat) -> Effects.SimpleEff.Eff (MazeGrid n m) [RND, STDIO] 
 generateGrid n m = do
-    adjList <- genAdjList (n * m)
+    adjList <- genAdjList 0 [] []
     pure $ Grid n m (reverse adjList)
-  where genAdjList : (idx : Nat) -> Eff (List AdjList) [RND]
-        genAdjList Z = pure []
-        genAdjList (S idx) = do
-          rest <- genAdjList idx
-          cur <- genSingleAdj idx
-          pure (cur :: rest)
-    where genSingleAdj : Nat -> Eff (AdjList) [RND]
-          genSingleAdj idx = do
+  where genAdjList : (idx : Nat) -> List Vertex -> List AdjList -> Eff (List AdjList) [RND, STDIO]
+        genAdjList idx added acc = if idx == (n * m) 
+                                  then pure acc
+                                  else do
+                              (cur, new_added) <- genSingleAdj idx added
+                              genAdjList (idx + 1) new_added (cur :: acc)
+    where genSingleAdj : Nat -> List Vertex -> Eff ((AdjList, List Vertex)) [RND, STDIO]
+          genSingleAdj idx already_added = do
             let v = natToVertex n m idx
             let x = the Integer $ cast $ fst v
             let y = the Integer $ cast $ snd v
             let lst = the (List (Integer, Integer)) [(dx + x, dy + y) | (dx, dy) <- shift_vec]
             let filtered = filter (\(a, b) => 0 <= a && a < (the Integer $ cast n) && 0 <= b && b < (the Integer $ cast m)) lst
             let casted = [(the Nat $ cast xx, the Nat $ cast yy) | (xx, yy) <- filtered] 
-            pure casted
+            let not_added = filter (\x => not $ elem x already_added) casted
+            putStrLn (show x ++ " " ++ show y ++ " " ++ show not_added)
+            pure (not_added, not_added ++ already_added)
 
 
 printMaze : MazeGrid n m -> List Integer -> List Integer -> Vertex -> Vertex -> Eff () [STDIO]
@@ -115,6 +117,7 @@ printMaze (Grid n m adj) distToEnter distToExit enter exit = do
                     else do
                       putChar ' '
                       printColBetweenRows (col_idx + 1)
+
       
 calcDist : MazeGrid n m -> Vertex -> List Integer
 calcDist (Grid n m adj) vert = take (n * m) $ bfs [vert] [if t == (vertexToNat n m vert) then 0 else -1 | t <- [0..n*m]]
