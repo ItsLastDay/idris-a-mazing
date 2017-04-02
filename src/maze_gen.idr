@@ -47,30 +47,46 @@ natToVertex : Nat -> Nat -> Nat -> Vertex
 natToVertex n m x = (x `div` m, x `mod` m)
 
 
+genEdgesFromVertex : Nat -> Nat -> Vertex -> EdgeList
+genEdgesFromVertex n m v = runPure $ do
+    let x = the Integer $ cast $ fst v
+    let y = the Integer $ cast $ snd v
+    let lst = the (List (Integer, Integer)) [(dx + x, dy + y) | (dx, dy) <- shift_vec]
+    let filtered = filter (\(a, b) => 0 <= a && a < (the Integer $ cast n) && 0 <= b && b < (the Integer $ cast m)) lst
+    let neighbours = [(the Nat $ cast xx, the Nat $ cast yy) | (xx, yy) <- filtered] 
+    pure [ (v, u) | u <- neighbours ]
+
+
+rotate : List a -> Nat -> List a
+rotate xs Z = xs
+rotate (x :: xs) (S k) = (rotate xs k) ++ [x]
+
+rotateRandom : List a -> Eff (List a) [RND]
+rotateRandom [] = pure []
+rotateRandom xs = do
+  idx <- rndInt 0 ((the Integer $ cast $ length xs) - 1)
+  pure $ rotate xs (cast idx)
+
 
 generateGrid : (n : Nat) -> (m : Nat) -> Effects.SimpleEff.Eff (MazeGrid n m) [RND, STDIO] 
 generateGrid n m = do
-    edgeList <- genEdges 0 [] []
+    let initial = (0, 0)
+    edgeList <- genEdges [initial] $ genEdgesFromVertex n m initial
     pure $ Grid n m edgeList
-  where genEdges : (idx : Nat) -> List Vertex -> EdgeList -> Eff (EdgeList) [RND, STDIO]
-        genEdges idx added acc = if idx == (n * m) 
-                                  then pure acc
-                                  else do
-                              (cur, new_added) <- genSingleAdj idx added
-                              genEdges (idx + 1) new_added (cur ++ acc)
-    where genSingleAdj : Nat -> List Vertex -> Eff ((EdgeList, List Vertex)) [RND, STDIO]
-          genSingleAdj idx already_added = do
-            let v = natToVertex n m idx
-            let x = the Integer $ cast $ fst v
-            let y = the Integer $ cast $ snd v
-            let lst = the (List (Integer, Integer)) [(dx + x, dy + y) | (dx, dy) <- shift_vec]
-            let filtered = filter (\(a, b) => 0 <= a && a < (the Integer $ cast n) && 0 <= b && b < (the Integer $ cast m)) lst
-            let casted = [(the Nat $ cast xx, the Nat $ cast yy) | (xx, yy) <- filtered] 
-            let not_added = filter (\x => not $ elem x already_added) casted
-            let edges_added = nub $ [ (v, x) | x <- not_added ] ++ [ (x, v) | x <- not_added ]
-            putStrLn (show x ++ " " ++ show y ++ " " ++ show edges_added)
-            pure (edges_added, not_added ++ already_added)
-
+  where genEdges : List Vertex -> EdgeList -> Effects.SimpleEff.Eff (EdgeList) [RND, STDIO] 
+        genEdges _ [] = pure []
+        genEdges added_vertices edges_orig@(_ :: _) = do
+          edges_rotated <- rotateRandom edges_orig
+          let e = Prelude.List.head {ok=believe_me True} edges_rotated
+          let edges = tail {ok=believe_me True} edges_rotated
+          let to = (snd e)
+          let inv_e = (snd e, fst e)
+          let new_added_vertices = (to :: added_vertices)
+          let edges_from_to = genEdgesFromVertex n m to
+          let added_edges = filter (\el => not $ elem (snd el) added_vertices) edges_from_to
+          let new_edges = added_edges ++ (filter (\el => (snd el) /= to) edges)
+          pure (inv_e :: e :: !(genEdges new_added_vertices new_edges))
+          
 
 printMaze : MazeGrid n m -> List Integer -> List Integer -> Vertex -> Vertex -> Eff () [STDIO]
 printMaze (Grid n m edges) distToEnter distToExit enter exit = do
@@ -89,9 +105,12 @@ printMaze (Grid n m edges) distToEnter distToExit enter exit = do
                 let curIdx = vertexToNat n m (row_idx, col_idx)
                 let distanceCurEnter = Prelude.List.index {ok=believe_me True} curIdx distToEnter
                 let distanceCurExit = Prelude.List.index {ok=believe_me True} curIdx distToExit
-                if distEnterExit == distanceCurExit + distanceCurEnter
-                   then putChar 'o'
-                   else putChar '.'
+                if (row_idx, col_idx) == enter || (row_idx, col_idx) == exit
+                   then putChar 'X'
+                   else
+                      if distEnterExit == distanceCurExit + distanceCurEnter
+                         then putChar 'o'
+                         else putChar '.'
                 if col_idx + 1 == m
                    then putChar '\n'
                    else do
