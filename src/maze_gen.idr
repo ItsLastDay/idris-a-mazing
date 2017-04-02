@@ -18,9 +18,12 @@ shift_vec = [(-1, 0), (0, 1), (0, -1), (1, 0)]
 Vertex : Type
 Vertex = (Nat, Nat)
 
-||| Adjacency list: neighbouring vertices.
-AdjList : Type
-AdjList = List Vertex
+Edge : Type
+Edge = (Vertex, Vertex)
+
+EdgeList : Type
+EdgeList = List Edge
+
 
 ||| An n x m Maze is a graph. 
 ||| It has n * m vertices. 
@@ -33,7 +36,7 @@ AdjList = List Vertex
 |||       -
 |||
 data MazeGrid : (n : Nat) -> (m : Nat) -> Type where
-  Grid : (n : Nat) -> (m : Nat) -> (adj : List AdjList) -> MazeGrid n m
+  Grid : (n : Nat) -> (m : Nat) -> (edges : EdgeList) -> MazeGrid n m
 
 
 vertexToNat : Nat -> Nat -> Vertex -> Nat
@@ -47,15 +50,15 @@ natToVertex n m x = (x `div` m, x `mod` m)
 
 generateGrid : (n : Nat) -> (m : Nat) -> Effects.SimpleEff.Eff (MazeGrid n m) [RND, STDIO] 
 generateGrid n m = do
-    adjList <- genAdjList 0 [] []
-    pure $ Grid n m (reverse adjList)
-  where genAdjList : (idx : Nat) -> List Vertex -> List AdjList -> Eff (List AdjList) [RND, STDIO]
-        genAdjList idx added acc = if idx == (n * m) 
+    edgeList <- genEdges 0 [] []
+    pure $ Grid n m edgeList
+  where genEdges : (idx : Nat) -> List Vertex -> EdgeList -> Eff (EdgeList) [RND, STDIO]
+        genEdges idx added acc = if idx == (n * m) 
                                   then pure acc
                                   else do
                               (cur, new_added) <- genSingleAdj idx added
-                              genAdjList (idx + 1) new_added (cur :: acc)
-    where genSingleAdj : Nat -> List Vertex -> Eff ((AdjList, List Vertex)) [RND, STDIO]
+                              genEdges (idx + 1) new_added (cur ++ acc)
+    where genSingleAdj : Nat -> List Vertex -> Eff ((EdgeList, List Vertex)) [RND, STDIO]
           genSingleAdj idx already_added = do
             let v = natToVertex n m idx
             let x = the Integer $ cast $ fst v
@@ -64,12 +67,13 @@ generateGrid n m = do
             let filtered = filter (\(a, b) => 0 <= a && a < (the Integer $ cast n) && 0 <= b && b < (the Integer $ cast m)) lst
             let casted = [(the Nat $ cast xx, the Nat $ cast yy) | (xx, yy) <- filtered] 
             let not_added = filter (\x => not $ elem x already_added) casted
-            putStrLn (show x ++ " " ++ show y ++ " " ++ show not_added)
-            pure (not_added, not_added ++ already_added)
+            let edges_added = nub $ [ (v, x) | x <- not_added ] ++ [ (x, v) | x <- not_added ]
+            putStrLn (show x ++ " " ++ show y ++ " " ++ show edges_added)
+            pure (edges_added, not_added ++ already_added)
 
 
 printMaze : MazeGrid n m -> List Integer -> List Integer -> Vertex -> Vertex -> Eff () [STDIO]
-printMaze (Grid n m adj) distToEnter distToExit enter exit = do
+printMaze (Grid n m edges) distToEnter distToExit enter exit = do
       printRow 0
     where printRow : Nat -> Eff () [STDIO]
           printRow row_idx = do
@@ -85,31 +89,21 @@ printMaze (Grid n m adj) distToEnter distToExit enter exit = do
                 let curIdx = vertexToNat n m (row_idx, col_idx)
                 let distanceCurEnter = Prelude.List.index {ok=believe_me True} curIdx distToEnter
                 let distanceCurExit = Prelude.List.index {ok=believe_me True} curIdx distToExit
-                {-
-                putStr $ show curIdx
-                putChar ' '
-                putStr $ show distEnterExit
-                putChar ' '
-                putStr $ show distanceCurEnter
-                putChar ' '
-                putStr $ show distanceCurExit
-                putChar '\n'
-                -}
                 if distEnterExit == distanceCurExit + distanceCurEnter
                    then putChar 'o'
                    else putChar '.'
                 if col_idx + 1 == m
                    then putChar '\n'
                    else do
-                     let adj_idx = vertexToNat n m (row_idx, col_idx)
-                     if Prelude.List.elem (row_idx, col_idx + 1) (Prelude.List.index adj_idx {ok=believe_me True} adj)
+                     let check_edge = ((row_idx, col_idx), (row_idx, col_idx + 1))
+                     if Prelude.List.elem check_edge edges
                         then putChar ' '
                         else putChar '|'
                      printColAtRow (col_idx + 1)
               printColBetweenRows : Nat -> Eff () [STDIO]
               printColBetweenRows col_idx = do
-                 let adj_idx = vertexToNat n m (row_idx, col_idx)
-                 if Prelude.List.elem (row_idx + 1, col_idx) (Prelude.List.index adj_idx {ok=believe_me True} adj)
+                 let check_edge = ((row_idx, col_idx), (row_idx + 1, col_idx))
+                 if Prelude.List.elem check_edge edges 
                     then putChar ' '
                     else putChar '-'
                  if col_idx + 1 == m
@@ -120,14 +114,14 @@ printMaze (Grid n m adj) distToEnter distToExit enter exit = do
 
       
 calcDist : MazeGrid n m -> Vertex -> List Integer
-calcDist (Grid n m adj) vert = take (n * m) $ bfs [vert] [if t == (vertexToNat n m vert) then 0 else -1 | t <- [0..n*m]]
+calcDist (Grid n m edges) vert = take (n * m) $ bfs [vert] [if t == (vertexToNat n m vert) then 0 else -1 | t <- [0..n*m]]
     where bfs : List Vertex -> List Integer -> List Integer 
           bfs [] lst = lst
           bfs (x :: xs) lst = do
             let adj_idx = vertexToNat n m x
             let cur_val = Prelude.List.index adj_idx {ok=believe_me True} lst
-            let neighbours = Prelude.List.index adj_idx {ok=believe_me True} adj
-            let filtered_neighbours = Prelude.List.filter (\x => (Prelude.List.index (vertexToNat n m x) {ok=believe_me True} lst) == -1) neighbours
+            let neighbours = map snd $ filter (\el => (fst el) == x) edges
+            let filtered_neighbours = Prelude.List.filter (\el => (Prelude.List.index (vertexToNat n m el) {ok=believe_me True} lst) == -1) neighbours
             bfs (xs ++ filtered_neighbours) (updLst lst filtered_neighbours (cur_val + 1))
         where updLst : List Integer -> List Vertex -> Integer -> List Integer
               updLst xs [] new_val = xs
