@@ -11,7 +11,7 @@ import Effect.State
 import Effect.Random
 
 
-shift_vec : List (Integer, Integer)
+shift_vec : Vect 4 (Integer, Integer)
 shift_vec = [(-1, 0), (0, 1), (0, -1), (1, 0)]
 
 
@@ -88,10 +88,36 @@ createVertex : (n : Nat) -> (m : Nat) -> (i : Nat) -> (j : Nat) ->
 createVertex n m i j {i_ok} {j_ok} = MkVertex (myNatToFin i n i_ok) (myNatToFin j m j_ok)
 
 
+getIthNeighbour : Vertex n m -> (i : Fin 4) -> Maybe (Vertex n m)
+getIthNeighbour {n} {m} (MkVertex x_fin y_fin) i = let (dx, dy) = index i shift_vec in
+      let new_x = x + dx in
+      let new_y = y + dy in (case new_x < 0 || new_y < 0 of
+           False => (let nat_new_x = the Nat $ cast new_x in
+                     let nat_new_y = the Nat $ cast new_y in (case isLTE (S nat_new_x) n of
+                                 (Yes prf_x) => (case isLTE (S nat_new_y) m of
+                                                    (Yes prf_y) => Just $ createVertex n m _ _ {i_ok=prf_x} {j_ok=prf_y}
+                                                    (No contra) => Nothing)
+                                 (No contra) => Nothing))
+           True => Nothing)
+    where x : Integer
+          x = the Integer $ cast $ finToNat x_fin
+          y : Integer
+          y = the Integer $ cast $ finToNat y_fin
+                                               
+
+
+neighbours : Vertex n m -> List (Vertex n m)
+neighbours v = catMaybes [ getIthNeighbour v i | i <- [FZ, FS FZ, FS $ FS FZ, FS $ FS $ FS FZ] ]
+
+
+genEdgesFromVertex : Vertex n m -> List (GridEdge n m)
+genEdgesFromVertex v = [ MkEdge v u | u <- neighbours v]
+
+
 generateGrid : (n : Nat) -> (m : Nat) -> Effects.SimpleEff.Eff (MazeGrid n m) [RND, STDIO] 
-{-
 generateGrid n m = do
-    let initial = (0, 0)
+  ?qqq
+    {-
     edgeList <- genEdges [initial] $ genEdgesFromVertex n m initial
     pure $ Grid n m edgeList
   where genEdges : List Vertex -> EdgeList -> Effects.SimpleEff.Eff (EdgeList) [RND, STDIO] 
