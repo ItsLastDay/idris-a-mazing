@@ -19,6 +19,10 @@ data Vertex : Nat -> Nat -> Type where
   MkVertex : (i : Fin n) -> (j : Fin m) -> Vertex n m
 
 
+implementation Eq (Vertex n m) where
+  (==) (MkVertex i j) (MkVertex q w) = i == q && j == w
+
+
 data GenericEdge : Type -> Type where
   MkEdge : a -> a -> GenericEdge a
 
@@ -62,6 +66,14 @@ vertexToFin : Vertex n m -> Fin (m * n + m)
 vertexToFin {n} {m} (MkVertex i j) = shiftByFin j $ mulFin i m
 
 
+reversedEdge : GridEdge n m -> GridEdge n m
+reversedEdge (MkEdge u v) = MkEdge v u
+
+
+whereEdgePoints : GridEdge n m -> Vertex n m
+whereEdgePoints (MkEdge u v) = v
+
+
 rotate : Vect n a -> Nat -> Vect n a
 rotate xs Z = xs
 rotate {n=(S len)} (x :: xs) (S k) = rewrite plusCommutative 1 len in (rotate xs k) ++ [x]
@@ -82,27 +94,27 @@ myNatToFin (S k) (S j) y = shift 1 $ myNatToFin k j (fromLteSucc y)
 
 
 createVertex : (n : Nat) -> (m : Nat) -> (i : Nat) -> (j : Nat) ->
-               {auto i_ok: LT i n} ->
-               {auto j_ok: LT j m} ->
+               {auto iOk: LT i n} ->
+               {auto jOk: LT j m} ->
                Vertex n m
-createVertex n m i j {i_ok} {j_ok} = MkVertex (myNatToFin i n i_ok) (myNatToFin j m j_ok)
+createVertex n m i j {iOk} {jOk} = MkVertex (myNatToFin i n iOk) (myNatToFin j m jOk)
 
 
 getIthNeighbour : Vertex n m -> (i : Fin 4) -> Maybe (Vertex n m)
-getIthNeighbour {n} {m} (MkVertex x_fin y_fin) i = let (dx, dy) = index i shift_vec in
-      let new_x = x + dx in
-      let new_y = y + dy in (case new_x < 0 || new_y < 0 of
-           False => (let nat_new_x = the Nat $ cast new_x in
-                     let nat_new_y = the Nat $ cast new_y in (case isLTE (S nat_new_x) n of
-                                 (Yes prf_x) => (case isLTE (S nat_new_y) m of
-                                                    (Yes prf_y) => Just $ createVertex n m _ _ {i_ok=prf_x} {j_ok=prf_y}
+getIthNeighbour {n} {m} (MkVertex xFin yFin) i = let (dx, dy) = index i shift_vec in
+      let newX = x + dx in
+      let newY = y + dy in (case newX < 0 || newY < 0 of
+           False => (let natNewX = the Nat $ cast newX in
+                     let natNewY = the Nat $ cast newY in (case isLTE (S natNewX) n of
+                                 (Yes prfX) => (case isLTE (S natNewY) m of
+                                                    (Yes prfY) => Just $ createVertex n m _ _ {iOk=prfX} {jOk=prfY}
                                                     (No contra) => Nothing)
                                  (No contra) => Nothing))
            True => Nothing)
     where x : Integer
-          x = the Integer $ cast $ finToNat x_fin
+          x = the Integer $ cast $ finToNat xFin
           y : Integer
-          y = the Integer $ cast $ finToNat y_fin
+          y = the Integer $ cast $ finToNat yFin
                                                
 
 
@@ -110,30 +122,39 @@ neighbours : Vertex n m -> List (Vertex n m)
 neighbours v = catMaybes [ getIthNeighbour v i | i <- [FZ, FS FZ, FS $ FS FZ, FS $ FS $ FS FZ] ]
 
 
-genEdgesFromVertex : Vertex n m -> List (GridEdge n m)
-genEdgesFromVertex v = [ MkEdge v u | u <- neighbours v]
+genEdgesFromVertex : Vertex n m -> (p : Nat ** (Vect p (GridEdge n m)))
+genEdgesFromVertex v = (_ ** fromList [ MkEdge v u | u <- neighbours v])
 
 
-generateGrid : (n : Nat) -> (m : Nat) -> Effects.SimpleEff.Eff (MazeGrid n m) [RND, STDIO] 
-generateGrid n m = do
-  ?qqq
-    {-
-    edgeList <- genEdges [initial] $ genEdgesFromVertex n m initial
+edgeNotPontsToAnyVertex : GridEdge n m -> List (Vertex n m) -> Bool
+edgeNotPontsToAnyVertex (MkEdge x y) xs = not $ Prelude.List.elem y xs
+
+
+-- already added vertices -> list of unprocessed edges -> list of resulting edges
+genEdges : List (Vertex n m) -> Vect len (GridEdge n m) -> Effects.SimpleEff.Eff (List (GridEdge n m)) [RND, STDIO] 
+genEdges _ [] = pure []
+genEdges {len=(S r)} addedVertices edgesPool = do
+    edgesRotated <- rotateRandom edgesPool
+    let (chosenEdge :: remainingPool) = edgesRotated
+    pure (chosenEdge :: (reversedEdge chosenEdge) :: 
+      !(genEdges (calcNewVertices addedVertices chosenEdge) (snd $ calcNewEdgesPool remainingPool chosenEdge addedVertices)))
+
+  where calcNewVertices : List (Vertex n m) -> GridEdge n m -> List (Vertex n m)
+        calcNewVertices xs (MkEdge x y) = y :: xs
+
+        calcNewEdgesPool : Vect len1 (GridEdge n m) -> GridEdge n m -> List (Vertex n m) -> (p : Nat ** Vect p (GridEdge n m))
+        calcNewEdgesPool pool (MkEdge fr to) vertices = 
+          let newEdges = snd $ filter (\edge => edgeNotPontsToAnyVertex edge vertices) (snd $ genEdgesFromVertex to) in 
+          let filteredOldEdges = snd $ filter (\edge => (whereEdgePoints edge) /= to) pool in
+              (_ ** (newEdges ++ filteredOldEdges))
+
+
+generateGrid : (n : Nat) -> (m : Nat) -> LT 0 n -> LT 0 m -> Effects.SimpleEff.Eff (MazeGrid n m) [RND, STDIO] 
+generateGrid n m prf_n prf_m = do
+    edgeList <- genEdges [initialVertex] $ snd $ genEdgesFromVertex initialVertex
     pure $ Grid n m edgeList
-  where genEdges : List Vertex -> EdgeList -> Effects.SimpleEff.Eff (EdgeList) [RND, STDIO] 
-        genEdges _ [] = pure []
-        genEdges added_vertices edges_orig@(_ :: _) = do
-          edges_rotated <- rotateRandom edges_orig
-          let e = Prelude.List.head {ok=believe_me True} edges_rotated
-          let edges = tail {ok=believe_me True} edges_rotated
-          let to = (snd e)
-          let inv_e = (snd e, fst e)
-          let new_added_vertices = (to :: added_vertices)
-          let edges_from_to = genEdgesFromVertex n m to
-          let added_edges = filter (\el => not $ elem (snd el) added_vertices) edges_from_to
-          let new_edges = added_edges ++ (filter (\el => (snd el) /= to) edges)
-          pure (inv_e :: e :: !(genEdges new_added_vertices new_edges))
-          -}
+  where initialVertex : Vertex n m
+        initialVertex = createVertex n m 0 0 {iOk=prf_n} {jOk=prf_m}
 
 
 generatePrintMaze : Eff () [STDIO, SYSTEM, RND, EXCEPTION String]
@@ -159,7 +180,8 @@ generatePrintMaze = do
   t <- time
   srand t
 
-  grid <- generateGrid n m 
+  -- maybe do smth like "(S k) <- n | blabla" to get rid of believe_me?
+  grid <- generateGrid n m (believe_me True) (believe_me True)
 
   pure ()
 
