@@ -115,7 +115,7 @@ printMaze (Grid n m edges) distToEnter distToExit enter exit = do
                    then putChar '\n'
                    else do
                      let check_edge = ((row_idx, col_idx), (row_idx, col_idx + 1))
-                     if Prelude.List.elem check_edge edges
+                if Prelude.List.elem check_edge edges
                         then putChar ' '
                         else putChar '|'
                      printColAtRow (col_idx + 1)
