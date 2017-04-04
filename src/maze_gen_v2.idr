@@ -131,7 +131,7 @@ edgeNotPontsToAnyVertex (MkEdge x y) xs = not $ Prelude.List.elem y xs
 
 
 -- already added vertices -> list of unprocessed edges -> list of resulting edges
-genEdges : List (Vertex n m) -> Vect len (GridEdge n m) -> Effects.SimpleEff.Eff (List (GridEdge n m)) [RND, STDIO] 
+genEdges : List (Vertex n m) -> Vect len (GridEdge n m) -> Eff (List (GridEdge n m)) [RND, STDIO] 
 genEdges _ [] = pure []
 genEdges {len=(S r)} addedVertices edgesPool = do
     edgesRotated <- rotateRandom edgesPool
@@ -149,7 +149,7 @@ genEdges {len=(S r)} addedVertices edgesPool = do
               (_ ** (newEdges ++ filteredOldEdges))
 
 
-generateGrid : (n : Nat) -> (m : Nat) -> LT 0 n -> LT 0 m -> Effects.SimpleEff.Eff (MazeGrid n m) [RND, STDIO] 
+generateGrid : (n : Nat) -> (m : Nat) -> LT 0 n -> LT 0 m -> Eff (MazeGrid n m) [RND, STDIO] 
 generateGrid n m prf_n prf_m = do
     edgeList <- genEdges [initialVertex] $ snd $ genEdgesFromVertex initialVertex
     pure $ Grid n m edgeList
@@ -157,31 +157,31 @@ generateGrid n m prf_n prf_m = do
         initialVertex = createVertex n m 0 0 {iOk=prf_n} {jOk=prf_m}
 
 
+parseDimension : Integer -> Eff ((n : Nat ** LT 0 n)) [EXCEPTION String]
+parseDimension x = case isLTE 1 xNat of
+                        (Yes prf) => pure (xNat ** prf)
+                        (No contra) => raise ("Invalid maze dimension " ++ show x)
+    where xNat : Nat
+          xNat = the Nat $ cast x
+
+
 generatePrintMaze : Eff () [STDIO, SYSTEM, RND, EXCEPTION String]
 generatePrintMaze = do
-  [prog, n_str, m_str] <- getArgs | [] => putStrLn "Can't happen"
+  [prog, nStr, mStr] <- getArgs | [] => putStrLn "Can't happen"
                           | [prog] => putStrLn "No arguments"
                           | [prog, n] => putStrLn "Not enough arguments"
                           | _ => putStrLn "Too many arguments" 
   
-  -- Interesting fact: if we cast to Nat,
-  -- and then check that, e.g., `n <= 0`,
-  -- negative numbers will *pass this check!*.  
-  -- However, in REPL, `the Nat (cast "-4")` gives 0.
-  let n_int = the Integer (cast n_str)
-  let m_int = the Integer (cast m_str)
-  if n_int <= 0 || m_int <= 0
-     then raise "Invalid maze parameters"
-     else pure ()
-
-  let n = the Nat $ cast n_int
-  let m = the Nat $ cast m_int
+  (n ** nPrf) <- parseDimension (the Integer $ cast nStr)
+  (m ** mPrf) <- parseDimension (the Integer $ cast mStr)
 
   t <- time
   srand t
 
-  -- maybe do smth like "(S k) <- n | blabla" to get rid of believe_me?
-  grid <- generateGrid n m (believe_me True) (believe_me True)
+  grid <- generateGrid n m nPrf mPrf
+
+--  enter <- rndInt 0 (m_int - 1)
+--  let startVertex = createVertex n m 0 (the Nat $ cast enter) {jOk=believe_me True}
 
   pure ()
 
