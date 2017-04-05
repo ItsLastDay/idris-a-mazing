@@ -74,6 +74,10 @@ whereEdgePoints : GridEdge n m -> Vertex n m
 whereEdgePoints (MkEdge u v) = v
 
 
+whereEdgeStarts : GridEdge n m -> Vertex n m
+whereEdgeStarts (MkEdge u v) = u
+
+
 rotate : Vect n a -> Nat -> Vect n a
 rotate xs Z = xs
 rotate {n=(S len)} (x :: xs) (S k) = rewrite plusCommutative 1 len in (rotate xs k) ++ [x]
@@ -122,6 +126,10 @@ neighbours : Vertex n m -> List (Vertex n m)
 neighbours v = catMaybes [ getIthNeighbour v i | i <- [FZ, FS FZ, FS $ FS FZ, FS $ FS $ FS FZ] ]
 
 
+neighboursInGrid : Vertex n m -> MazeGrid n m -> List (Vertex n m)
+neighboursInGrid x (Grid n m edges) = map whereEdgePoints $ filter (\edge => (whereEdgeStarts edge) == x) edges
+
+
 genEdgesFromVertex : Vertex n m -> (p : Nat ** (Vect p (GridEdge n m)))
 genEdgesFromVertex v = (_ ** fromList [ MkEdge v u | u <- neighbours v])
 
@@ -155,6 +163,25 @@ generateGrid n m prf_n prf_m = do
     pure $ Grid n m edgeList
   where initialVertex : Vertex n m
         initialVertex = createVertex n m 0 0 {iOk=prf_n} {jOk=prf_m}
+
+distVector : Nat -> Nat -> Type
+distVector n m = Vect (m * n + m) Integer
+
+getDistFrom : MazeGrid n m -> Vertex n m -> distVector n m
+getDistFrom (Grid n m edges) v = runPureInit [genInitialList] $ bfs [v] 
+  where bfs : List (Vertex n m) -> Effects.SimpleEff.Eff (distVector n m) [STATE (distVector n m)]
+        bfs [] = get
+        bfs (x :: xs) = do
+          curDist <- get
+          let unvisitedNeighbours = filter (\vert => (index (vertexToFin vert) curDist) == -1) $ neighboursInGrid v (Grid n m edges)
+          update $ updUnvisited ((index (vertexToFin x) curDist) + 1) unvisitedNeighbours
+          bfs xs
+        where updUnvisited : Integer -> List (Vertex n m) -> distVector n m -> distVector n m
+              updUnvisited x [] y = y
+              updUnvisited x (z :: xs) y = updUnvisited x xs (updateAt (vertexToFin z) (const x) y)
+
+        genInitialList : distVector n m
+        genInitialList = updateAt (vertexToFin v) (const 0) $ replicate (m * n + m) (-1)
 
 
 parseDimension : Integer -> Eff ((n : Nat ** LT 0 n)) [EXCEPTION String]
