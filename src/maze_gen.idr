@@ -11,18 +11,33 @@ import Effect.State
 import Effect.Random
 
 
-shift_vec : List (Integer, Integer)
+shift_vec : Vect 4 (Integer, Integer)
 shift_vec = [(-1, 0), (0, 1), (0, -1), (1, 0)]
 
-||| Vertex: a pair of coordinates on a grid.
-Vertex : Type
-Vertex = (Nat, Nat)
 
-Edge : Type
-Edge = (Vertex, Vertex)
+data Vertex : Nat -> Nat -> Type where
+  MkVertex : (i : Fin n) -> (j : Fin m) -> Vertex n m
 
-EdgeList : Type
-EdgeList = List Edge
+
+implementation Eq (Vertex n m) where
+  (==) (MkVertex i j) (MkVertex q w) = i == q && j == w
+
+
+data GenericEdge : Type -> Type where
+  MkEdge : a -> a -> GenericEdge a
+
+
+GridEdge : Nat -> Nat -> Type
+GridEdge n m = GenericEdge (Vertex n m)
+
+implementation Eq a => Eq (GenericEdge a) where
+  (==) (MkEdge x y) (MkEdge u v) = x == u && y == v
+
+implementation Show (Vertex n m) where
+  show (MkVertex i j) = "[" ++ (show $ finToNat i) ++ ", " ++ (show $ finToNat j) ++ "]"
+
+implementation Show a => Show (GenericEdge a) where
+  show (MkEdge x y) = "(" ++ show x ++ ", " ++ show y ++ ")"
 
 
 ||| An n x m Maze is a graph. 
@@ -31,130 +46,239 @@ EdgeList = List Edge
 ||| 
 ||| Example of 1x2 maze (along with indices of rows\columns):
 |||       0 1 
-|||         - 
+|||         _ 
 |||  0   |. .|
-|||       -
+|||       _
 |||
 data MazeGrid : (n : Nat) -> (m : Nat) -> Type where
-  Grid : (n : Nat) -> (m : Nat) -> (edges : EdgeList) -> MazeGrid n m
+  Grid : (n : Nat) -> (m : Nat) -> (edges : List (GridEdge n m)) -> MazeGrid n m
 
 
-vertexToNat : Nat -> Nat -> Vertex -> Nat
-vertexToNat n m x = (fst x) * m + (snd x)
+DistVector : Nat -> Nat -> Type
+DistVector n m = Vect (m * n + m) Integer
 
 
-natToVertex : Nat -> Nat -> Nat -> Vertex
-natToVertex n m x = (x `div` m, x `mod` m)
+getEdges : MazeGrid n m -> List (GridEdge n m)
+getEdges (Grid n m edges) = edges
 
 
-genEdgesFromVertex : Nat -> Nat -> Vertex -> EdgeList
-genEdgesFromVertex n m v = runPure $ do
-    let x = the Integer $ cast $ fst v
-    let y = the Integer $ cast $ snd v
-    let lst = the (List (Integer, Integer)) [(dx + x, dy + y) | (dx, dy) <- shift_vec]
-    let filtered = filter (\(a, b) => 0 <= a && a < (the Integer $ cast n) && 0 <= b && b < (the Integer $ cast m)) lst
-    let neighbours = [(the Nat $ cast xx, the Nat $ cast yy) | (xx, yy) <- filtered] 
-    pure [ (v, u) | u <- neighbours ]
+isLT : (m : Nat) -> (n : Nat) -> Dec (LT m n)
+isLT m n = isLTE (S m) n
+
+shiftByFin : Fin n -> Fin x -> Fin (x + n)
+shiftByFin {n=Z} FZ y impossible
+shiftByFin {n=(S k)} {x} FZ y = weakenN (S k) y
+shiftByFin {n=Z} (FS a) b impossible
+shiftByFin {n=(S k)} {x} (FS a) b = rewrite sym (plusSuccRightSucc x k) in shift 1 $ shiftByFin a b
 
 
-rotate : List a -> Nat -> List a
+mulFin : Fin n -> (m : Nat) -> Fin (m * n)
+mulFin x Z = absurd $ mulFin x Z
+mulFin {n} x (S Z) = rewrite plusZeroRightNeutral n in x
+mulFin {n=Z} x (S k) impossible
+mulFin {n=(S t)} x (S k) = rewrite plusCommutative t (k * (S t)) in 
+                                   rewrite plusSuccRightSucc (k * (S t)) t in shiftByFin x (mulFin x k)
+ 
+
+-- Every vertex is a pair (i, j), where i < n, j < m.
+-- We can map pairs to natural numbers: i * m + j < (n - 1) * m + m - 1 = n * m.
+vertexToFin : Vertex n m -> Fin (m * n + m)
+vertexToFin {n} {m} (MkVertex i j) = shiftByFin j $ mulFin i m
+
+
+reversedEdge : GridEdge n m -> GridEdge n m
+reversedEdge (MkEdge u v) = MkEdge v u
+
+
+whereEdgePoints : GridEdge n m -> Vertex n m
+whereEdgePoints (MkEdge u v) = v
+
+
+whereEdgeStarts : GridEdge n m -> Vertex n m
+whereEdgeStarts (MkEdge u v) = u
+
+
+rotate : Vect n a -> Nat -> Vect n a
 rotate xs Z = xs
-rotate (x :: xs) (S k) = (rotate xs k) ++ [x]
+rotate {n=(S len)} (x :: xs) (S k) = rewrite plusCommutative 1 len in (rotate xs k) ++ [x]
 
-rotateRandom : List a -> Eff (List a) [RND]
+
+rotateRandom : Vect n a -> Eff (Vect n a) [RND]
 rotateRandom [] = pure []
 rotateRandom xs = do
   idx <- rndInt 0 ((the Integer $ cast $ length xs) - 1)
   pure $ rotate xs (cast idx)
+  
+
+myNatToFin : (x : Nat) -> (up : Nat) -> LT x up -> Fin up
+myNatToFin Z Z y impossible
+myNatToFin Z (S k) y = FZ
+myNatToFin (S k) Z y impossible
+myNatToFin (S k) (S j) y = shift 1 $ myNatToFin k j (fromLteSucc y)
 
 
-generateGrid : (n : Nat) -> (m : Nat) -> Effects.SimpleEff.Eff (MazeGrid n m) [RND, STDIO] 
-generateGrid n m = do
-    let initial = (0, 0)
-    edgeList <- genEdges [initial] $ genEdgesFromVertex n m initial
+createVertex : (n : Nat) -> (m : Nat) -> (i : Nat) -> (j : Nat) ->
+               {auto iOk: LT i n} ->
+               {auto jOk: LT j m} ->
+               Vertex n m
+createVertex n m i j {iOk} {jOk} = MkVertex (myNatToFin i n iOk) (myNatToFin j m jOk)
+
+
+getIthNeighbour : Vertex n m -> (i : Fin 4) -> Maybe (Vertex n m)
+getIthNeighbour {n} {m} (MkVertex xFin yFin) i = 
+    let (dx, dy) = index i shift_vec in
+    let newX = x + dx in
+    let newY = y + dy in (case newX < 0 || newY < 0 of
+         False => (let natNewX = the Nat $ cast newX in
+                   let natNewY = the Nat $ cast newY in (case isLT natNewX n of
+                               (Yes prfX) => (case isLT natNewY m of
+                                                  (Yes prfY) => Just $ createVertex n m _ _ {iOk=prfX} {jOk=prfY}
+                                                  (No contra) => Nothing)
+                               (No contra) => Nothing))
+         True => Nothing)
+    where x : Integer
+          x = the Integer $ cast $ finToNat xFin
+          y : Integer
+          y = the Integer $ cast $ finToNat yFin
+                                               
+
+
+neighbours : Vertex n m -> List (Vertex n m)
+neighbours v = catMaybes [ getIthNeighbour v i | i <- [FZ, FS FZ, FS $ FS FZ, FS $ FS $ FS FZ] ]
+
+
+neighboursInGrid : Vertex n m -> MazeGrid n m -> List (Vertex n m)
+neighboursInGrid x (Grid n m edges) = map whereEdgePoints $ filter (\edge => (whereEdgeStarts edge) == x) edges
+
+
+genEdgesFromVertex : Vertex n m -> (p : Nat ** (Vect p (GridEdge n m)))
+genEdgesFromVertex v = (_ ** fromList [ MkEdge v u | u <- neighbours v])
+
+
+edgeNotPontsToAnyVertex : GridEdge n m -> List (Vertex n m) -> Bool
+edgeNotPontsToAnyVertex (MkEdge x y) xs = not $ Prelude.List.elem y xs
+
+
+-- already added vertices -> list of unprocessed edges -> list of resulting edges
+genEdges : List (Vertex n m) -> Vect len (GridEdge n m) -> Eff (List (GridEdge n m)) [RND, STDIO] 
+genEdges _ [] = pure []
+genEdges {len=(S r)} addedVertices edgesPool = do
+    edgesRotated <- rotateRandom edgesPool
+    let (chosenEdge :: remainingPool) = edgesRotated
+    pure (chosenEdge :: (reversedEdge chosenEdge) :: 
+      !(genEdges (calcNewVertices addedVertices chosenEdge) (snd $ calcNewEdgesPool remainingPool chosenEdge addedVertices)))
+
+  where calcNewVertices : List (Vertex n m) -> GridEdge n m -> List (Vertex n m)
+        calcNewVertices xs (MkEdge x y) = y :: xs
+
+        calcNewEdgesPool : Vect len1 (GridEdge n m) -> GridEdge n m -> List (Vertex n m) -> (p : Nat ** Vect p (GridEdge n m))
+        calcNewEdgesPool pool (MkEdge fr to) vertices = 
+          let newEdges = snd $ filter (\edge => edgeNotPontsToAnyVertex edge vertices) (snd $ genEdgesFromVertex to) in 
+          let filteredOldEdges = snd $ filter (\edge => (whereEdgePoints edge) /= to) pool in
+              (_ ** (newEdges ++ filteredOldEdges))
+
+
+generateGrid : (n : Nat) -> (m : Nat) -> LT 0 n -> LT 0 m -> Eff (MazeGrid n m) [RND, STDIO] 
+generateGrid n m prf_n prf_m = do
+    edgeList <- genEdges [initialVertex] $ snd $ genEdgesFromVertex initialVertex
     pure $ Grid n m edgeList
-  where genEdges : List Vertex -> EdgeList -> Effects.SimpleEff.Eff (EdgeList) [RND, STDIO] 
-        genEdges _ [] = pure []
-        genEdges added_vertices edges_orig@(_ :: _) = do
-          edges_rotated <- rotateRandom edges_orig
-          let e = Prelude.List.head {ok=believe_me True} edges_rotated
-          let edges = tail {ok=believe_me True} edges_rotated
-          let to = (snd e)
-          let inv_e = (snd e, fst e)
-          let new_added_vertices = (to :: added_vertices)
-          let edges_from_to = genEdgesFromVertex n m to
-          let added_edges = filter (\el => not $ elem (snd el) added_vertices) edges_from_to
-          let new_edges = added_edges ++ (filter (\el => (snd el) /= to) edges)
-          pure (inv_e :: e :: !(genEdges new_added_vertices new_edges))
-          
+  where initialVertex : Vertex n m
+        initialVertex = createVertex n m 0 0 {iOk=prf_n} {jOk=prf_m}
 
-printMaze : MazeGrid n m -> List Integer -> List Integer -> Vertex -> Vertex -> Eff () [STDIO]
-printMaze (Grid n m edges) distToEnter distToExit enter exit = do
-      printRow 0
+
+bfs : MazeGrid n m -> List (Vertex n m) -> Effects.SimpleEff.Eff (DistVector n m) [STATE (DistVector n m)]
+bfs _ [] = get
+bfs gr@(Grid n m edges) (x :: xs) = do
+    curDist <- get
+    let unvisitedNeighbours = filter (\vert => (index (vertexToFin vert) curDist) == -1) $ neighboursInGrid x gr 
+    update $ updUnvisited ((index (vertexToFin x) curDist) + 1) unvisitedNeighbours
+    bfs gr (xs ++ unvisitedNeighbours)
+  where updUnvisited : Integer -> List (Vertex n m) -> DistVector n m -> DistVector n m
+        updUnvisited x [] y = y
+        updUnvisited x (z :: xs) y = updUnvisited x xs (updateAt (vertexToFin z) (const x) y)
+
+getDistFrom : MazeGrid n m -> Vertex n m -> DistVector n m
+getDistFrom {n} {m} grid v = runPureInit [genInitialList] $ bfs grid [v] 
+    where genInitialList : DistVector n m
+          genInitialList = updateAt (vertexToFin v) (const 0) $ replicate (m * n + m) (-1)
+
+
+
+parseDimension : Integer -> Eff ((n : Nat ** LT 0 n)) [EXCEPTION String]
+parseDimension x = case isLT 0 xNat of
+                        (Yes prf) => pure (xNat ** prf)
+                        (No contra) => raise ("Invalid maze dimension " ++ show x)
+    where xNat : Nat
+          xNat = the Nat $ cast x
+
+
+printMaze : MazeGrid n m -> Vertex n m -> Vertex n m -> DistVector n m -> DistVector n m -> Integer -> Eff () [STDIO]
+printMaze (Grid n m edges) start end distFromStart distFromEnd distStartToEnd = printRow 0
     where printRow : Nat -> Eff () [STDIO]
-          printRow row_idx = do
-            printColAtRow 0
-            if row_idx + 1 == n 
-               then putStrLn "End"
-               else do
-                 printColBetweenRows 0
-                 printRow (row_idx + 1)
-        where printColAtRow : Nat -> Eff () [STDIO]
-              printColAtRow col_idx = do
-                let distEnterExit = Prelude.List.index {ok=believe_me True} (vertexToNat n m exit) distToEnter
-                let curIdx = vertexToNat n m (row_idx, col_idx)
-                let distanceCurEnter = Prelude.List.index {ok=believe_me True} curIdx distToEnter
-                let distanceCurExit = Prelude.List.index {ok=believe_me True} curIdx distToExit
-                if (row_idx, col_idx) == enter || (row_idx, col_idx) == exit
-                   then putChar 'X'
-                   else
-                      if distEnterExit == distanceCurExit + distanceCurEnter
-                         then putChar 'o'
-                         else putChar '.'
-                if col_idx + 1 == m
-                   then putChar '\n'
-                   else do
-                     let check_edge = ((row_idx, col_idx), (row_idx, col_idx + 1))
-                if Prelude.List.elem check_edge edges
-                        then putChar ' '
-                        else putChar '|'
-                     printColAtRow (col_idx + 1)
-              printColBetweenRows : Nat -> Eff () [STDIO]
-              printColBetweenRows col_idx = do
-                 let check_edge = ((row_idx, col_idx), (row_idx + 1, col_idx))
-                 if Prelude.List.elem check_edge edges 
-                    then putChar ' '
-                    else putChar '-'
-                 if col_idx + 1 == m
-                    then putChar '\n'
-                    else do
-                      putChar ' '
-                      printColBetweenRows (col_idx + 1)
+          printRow row_idx = 
+              case isLT row_idx n of
+                  (Yes prf_row) => do
+                      printColAtRow 0 row_idx prf_row
+                      printColBetweenRows 0 row_idx prf_row
+                      printRow (row_idx + 1)
+                  (No contra) => putStrLn "End"
+            where printColBetweenRows : Nat -> (row : Nat) -> LT row n -> Eff () [STDIO]
+                  printColBetweenRows col_idx row_idx prf_row = 
+                      case isLT (S row_idx) n of
+                          (Yes prf_row_next) => (case isLT col_idx m of
+                                                (Yes prf_col) => do
+                                                  let curVert = createVertex n m row_idx col_idx {iOk=prf_row} {jOk=prf_col}
+                                                  let nextVert = createVertex n m (S row_idx) col_idx {iOk=prf_row_next} {jOk=prf_col}
+                                                  putChar (if elem (MkEdge curVert nextVert) edges then ' ' else '_')
+                                                  putChar '|'
+                                                  printColBetweenRows (col_idx + 1) row_idx prf_row
+                                                (No contra) => putChar '\n')
+                          (No contra) => pure ()
 
-      
-calcDist : MazeGrid n m -> Vertex -> List Integer
-calcDist (Grid n m edges) vert = take (n * m) $ bfs [vert] [if t == (vertexToNat n m vert) then 0 else -1 | t <- [0..n*m]]
-    where bfs : List Vertex -> List Integer -> List Integer 
-          bfs [] lst = lst
-          bfs (x :: xs) lst = do
-            let adj_idx = vertexToNat n m x
-            let cur_val = Prelude.List.index adj_idx {ok=believe_me True} lst
-            let neighbours = map snd $ filter (\el => (fst el) == x) edges
-            let filtered_neighbours = Prelude.List.filter (\el => (Prelude.List.index (vertexToNat n m el) {ok=believe_me True} lst) == -1) neighbours
-            bfs (xs ++ filtered_neighbours) (updLst lst filtered_neighbours (cur_val + 1))
-        where updLst : List Integer -> List Vertex -> Integer -> List Integer
-              updLst xs [] new_val = xs
-              updLst xs (y :: ys) new_val = do
-                let y_idx = vertexToNat n m y
-                let sp = splitAt y_idx xs
-                let sp_head = (fst sp)
-                let sp_tail = (tail {ok=believe_me True} $ Prelude.Basics.snd sp)
-                updLst (sp_head ++ (new_val :: sp_tail)) ys new_val
+                  printColAtRow : Nat -> (row : Nat) -> LT row n -> Eff () [STDIO]
+                  printColAtRow col_idx row_idx prf_row = 
+                      case isLT col_idx m of
+                           (Yes prf_col) => do
+                             putChar (decideCellCharacter prf_col)
+                             let curVertex = createVertex n m row_idx col_idx {iOk=prf_row} {jOk=prf_col} 
+                             case isLT (S col_idx) m  of 
+                                  (Yes prf_next_col) => do
+                                    let nextVertex = createVertex n m row_idx (S col_idx) {iOk=prf_row} {jOk=prf_next_col}
+                                    putChar (if elem (MkEdge curVertex nextVertex) edges then ' ' else '|')
+                                  (No contra) => pure ()
+                             printColAtRow (S col_idx) row_idx prf_row
+                           (No contra) => putChar '\n'
+                      where decideCellCharacter : LT col_idx m -> Char
+                            decideCellCharacter prf_col = 
+                              let curVertex = createVertex n m row_idx col_idx {iOk=prf_row} {jOk=prf_col} in
+                              let distToStart = index (vertexToFin curVertex) distFromStart in
+                              let distToEnd = index (vertexToFin curVertex) distFromEnd
+                              in 
+                                  if curVertex == start then 'S'
+                                  else if curVertex == end then 'E'
+                                  else
+                                    if distStartToEnd == distToStart + distToEnd 
+                                    then 'o'
+                                    else '.'
 
-printAligned : Show a => Integer -> Integer -> List a -> Eff () [STDIO]
+
+genProvableBoundedNat : (m : Nat) -> Eff ((n : Nat ** LT n m)) [RND, EXCEPTION String]
+genProvableBoundedNat m = let nNat = the Nat $ cast $ !(rndInt 0 ((the Integer $ cast m) - 1)) in
+                              case isLTE (S nNat) m of
+                               (Yes prf) => pure (nNat ** prf)
+                               (No contra) => raise "Number generated by rndInt was not in bounds"
+
+
+lteMinusPrf : (n : Nat) -> LT 0 n -> LT (minus n 1) n
+lteMinusPrf n nPrf with (nPrf)
+  lteMinusPrf (S right) nPrf | (LTESucc x) = rewrite minusZeroRight right in lteRefl
+
+
+-- debug output
+printAligned : Show a => Nat -> Nat -> List a -> Eff () [STDIO]
 printAligned n m [] = putChar '\n'
 printAligned n m (x :: xs) = do
-  if (((Prelude.List.length xs) + 1) `mod` (the Nat $ cast m)) == 0
+  if (((Prelude.List.length xs) + 1) `mod` m) == 0
      then putChar '\n'
      else pure ()
   putStr $ show x
@@ -162,40 +286,34 @@ printAligned n m (x :: xs) = do
   printAligned n m xs
 
 
+
 generatePrintMaze : Eff () [STDIO, SYSTEM, RND, EXCEPTION String]
 generatePrintMaze = do
-  [prog, n_str, m_str] <- getArgs | [] => putStrLn "Can't happen"
+  [prog, nStr, mStr] <- getArgs | [] => putStrLn "Can't happen"
                           | [prog] => putStrLn "No arguments"
                           | [prog, n] => putStrLn "Not enough arguments"
                           | _ => putStrLn "Too many arguments" 
   
-  -- Interesting fact: if we cast to Nat,
-  -- and then check that, e.g., `n <= 0`,
-  -- negative numbers will *pass this check!*.  
-  -- However, in REPL, `the Nat (cast "-4")` gives 0.
-  let n = the Integer (cast n_str)
-  let m = the Integer (cast m_str)
-  if n <= 0 || m <= 0
-     then raise "Invalid maze parameters"
-     else pure ()
-  
+  (n ** nPrf) <- parseDimension (the Integer $ cast nStr)
+  (m ** mPrf) <- parseDimension (the Integer $ cast mStr)
 
   t <- time
-  srand t  
-                          
-  -- generate entry column (0..m-1)
-  enter <- rndInt 0 (m - 1) 
-  -- generate exit column (0..m-1)
-  exit <- rndInt 0 (m - 1)
+  srand t
 
-  -- generate random grid
-  grid <- generateGrid (the Nat $ cast n) (the Nat $ cast m)
+  grid <- generateGrid n m nPrf mPrf
 
-  let distToEnter = calcDist grid (0, (the Nat $ cast enter))
-  let distToExit = calcDist grid ((the Nat $ cast (n - 1)), (the Nat $ cast exit))
+  (enterColumn ** enterColumnPrf) <- genProvableBoundedNat m 
+  let startVertex = createVertex n m 0 enterColumn {jOk=enterColumnPrf} 
+  (exitColumn ** exitColumnPrf) <- genProvableBoundedNat m
+  let endVertex = createVertex n m (n - 1) exitColumn {jOk=exitColumnPrf} {iOk=lteMinusPrf n nPrf}
 
-  printMaze grid distToEnter distToExit (0, the Nat $ cast enter) (the Nat $ cast $ n - 1, the Nat $ cast exit)
+  let distFromStart = getDistFrom grid startVertex 
+  let distFromEnd = getDistFrom grid endVertex
+  let distStartToEnd = index (vertexToFin endVertex) distFromStart
+  
+  printMaze grid startVertex endVertex distFromStart distFromEnd distStartToEnd
   pure ()
+
 
 main : IO ()
 main = run generatePrintMaze
