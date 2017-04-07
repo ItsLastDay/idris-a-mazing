@@ -3,12 +3,19 @@ Exam project for ["Programming with dependent types using Idris"](http://compsci
 
 Tested under Idris 1.0.
 
+# How to run
+Example usage (generating 20x20 maze):
+```
+idris -p effects -o ./bin/mazegen ./src/maze_gen_v2.idr
+./bin/mazegen 20 20
+```
+
 
 Example of generated maze (20x20):  
-here `X` denotes start and end cells, `o` denotes cells on path from enter to exit,
+here `S` denotes start cell, `E` denotes end cell, `o` denotes cells on path from enter to exit,
 `.` denotes a cell, `|` is a vertical wall, `_` is a horizontal wall.
 ```
-. o o o|.|. . .|.|o o . . . . . . . .|.
+. o o o|.|. . .|.|S o . . . . . . . .|.
 _   _       _ _   _   _ _ _ _ _   _ _   
 . o o|o . . .|.|.|o o . .|. . .|.|.|.|.
         _ _ _           _   _ _ _       
@@ -46,5 +53,5 @@ _ _ _   _       _ _   _   _   _   _   _
     _     _   _ _ _ _         _   _     
 .|.|. .|. .|o o o|. . .|.|.|. .|.|.|.|.
 _   _   _ _ _ _   _ _   _   _ _     _   
-. .|. . .|. . . o .|. . .|. .|. . . .|.
+. .|. . .|. . . E .|. . .|. .|. . . .|.
 ```
