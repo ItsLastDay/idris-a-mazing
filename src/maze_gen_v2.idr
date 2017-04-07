@@ -229,7 +229,7 @@ printMaze (Grid n m edges) start end distFromStart distFromEnd distStartToEnd = 
                                                 (Yes prf_col) => do
                                                   let curVert = createVertex n m row_idx col_idx {iOk=prf_row} {jOk=prf_col}
                                                   let nextVert = createVertex n m (S row_idx) col_idx {iOk=prf_row_next} {jOk=prf_col}
-                                                  putChar (if elem (MkEdge curVert nextVert) edges then ' ' else '-')
+                                                  putChar (if elem (MkEdge curVert nextVert) edges then ' ' else '_')
                                                   putChar ' '
                                                   printColBetweenRows (col_idx + 1) row_idx prf_row
                                                 (No contra) => putChar '\n')
@@ -246,6 +246,7 @@ printMaze (Grid n m edges) start end distFromStart distFromEnd distStartToEnd = 
                                     let nextVertex = createVertex n m row_idx (S col_idx) {iOk=prf_row} {jOk=prf_next_col}
                                     putChar (if elem (MkEdge curVertex nextVertex) edges then ' ' else '|')
                                   (No contra) => pure ()
+                             printColAtRow (S col_idx) row_idx prf_row
                            (No contra) => putChar '\n'
                       where decideCellCharacter : LT col_idx m -> Char
                             decideCellCharacter prf_col = 
@@ -253,9 +254,12 @@ printMaze (Grid n m edges) start end distFromStart distFromEnd distStartToEnd = 
                               let distToStart = index (vertexToFin curVertex) distFromStart in
                               let distToEnd = index (vertexToFin curVertex) distFromEnd
                               in 
-                                  if distStartToEnd == distToStart + distToEnd 
-                                  then 'o'
-                                  else '.'
+                                  if curVertex == start then 'S'
+                                  else if curVertex == end then 'E'
+                                  else
+                                    if distStartToEnd == distToStart + distToEnd 
+                                    then 'o'
+                                    else '.'
 
 
 genProvableBoundedNat : (m : Nat) -> Eff ((n : Nat ** LT n m)) [RND, EXCEPTION String]
