@@ -11,8 +11,8 @@ import Effect.State
 import Effect.Random
 
 
-shift_vec : Vect 4 (Integer, Integer)
-shift_vec = [(-1, 0), (0, 1), (0, -1), (1, 0)]
+shiftVec : Vect 4 (Integer, Integer)
+shiftVec = [(-1, 0), (0, 1), (0, -1), (1, 0)]
 
 
 data Vertex : Nat -> Nat -> Type where
@@ -126,7 +126,7 @@ createVertex n m i j {iOk} {jOk} = MkVertex (myNatToFin i n iOk) (myNatToFin j m
 
 getIthNeighbour : Vertex n m -> (i : Fin 4) -> Maybe (Vertex n m)
 getIthNeighbour {n} {m} (MkVertex xFin yFin) i = 
-    let (dx, dy) = index i shift_vec in
+    let (dx, dy) = index i shiftVec in
     let newX = x + dx in
     let newY = y + dy in (case newX < 0 || newY < 0 of
          False => (let natNewX = the Nat $ cast newX in
@@ -179,11 +179,11 @@ genEdges {len=(S r)} addedVertices edgesPool = do
 
 
 generateGrid : (n : Nat) -> (m : Nat) -> LT 0 n -> LT 0 m -> Eff (MazeGrid n m) [RND, STDIO] 
-generateGrid n m prf_n prf_m = do
+generateGrid n m prfN prfM = do
     edgeList <- genEdges [initialVertex] $ snd $ genEdgesFromVertex initialVertex
     pure $ Grid n m edgeList
   where initialVertex : Vertex n m
-        initialVertex = createVertex n m 0 0 {iOk=prf_n} {jOk=prf_m}
+        initialVertex = createVertex n m 0 0 {iOk=prfN} {jOk=prfM}
 
 
 bfs : MazeGrid n m -> List (Vertex n m) -> Effects.SimpleEff.Eff (DistVector n m) [STATE (DistVector n m)]
@@ -215,42 +215,42 @@ parseDimension x = case isLT 0 xNat of
 printMaze : MazeGrid n m -> Vertex n m -> Vertex n m -> DistVector n m -> DistVector n m -> Integer -> Eff () [STDIO]
 printMaze (Grid n m edges) start end distFromStart distFromEnd distStartToEnd = printRow 0
     where printRow : Nat -> Eff () [STDIO]
-          printRow row_idx = 
-              case isLT row_idx n of
-                  (Yes prf_row) => do
-                      printColAtRow 0 row_idx prf_row
-                      printColBetweenRows 0 row_idx prf_row
-                      printRow (row_idx + 1)
+          printRow rowIdx = 
+              case isLT rowIdx n of
+                  (Yes prfRow) => do
+                      printColAtRow 0 rowIdx prfRow
+                      printColBetweenRows 0 rowIdx prfRow
+                      printRow (rowIdx + 1)
                   (No contra) => putStrLn "End"
             where printColBetweenRows : Nat -> (row : Nat) -> LT row n -> Eff () [STDIO]
-                  printColBetweenRows col_idx row_idx prf_row = 
-                      case isLT (S row_idx) n of
-                          (Yes prf_row_next) => (case isLT col_idx m of
-                                                (Yes prf_col) => do
-                                                  let curVert = createVertex n m row_idx col_idx {iOk=prf_row} {jOk=prf_col}
-                                                  let nextVert = createVertex n m (S row_idx) col_idx {iOk=prf_row_next} {jOk=prf_col}
+                  printColBetweenRows colIdx rowIdx prfRow = 
+                      case isLT (S rowIdx) n of
+                          (Yes prfRowNext) => (case isLT colIdx m of
+                                                (Yes prfCol) => do
+                                                  let curVert = createVertex n m rowIdx colIdx {iOk=prfRow} {jOk=prfCol}
+                                                  let nextVert = createVertex n m (S rowIdx) colIdx {iOk=prfRowNext} {jOk=prfCol}
                                                   putChar (if elem (MkEdge curVert nextVert) edges then ' ' else '_')
                                                   putChar '|'
-                                                  printColBetweenRows (col_idx + 1) row_idx prf_row
+                                                  printColBetweenRows (colIdx + 1) rowIdx prfRow
                                                 (No contra) => putChar '\n')
                           (No contra) => pure ()
 
                   printColAtRow : Nat -> (row : Nat) -> LT row n -> Eff () [STDIO]
-                  printColAtRow col_idx row_idx prf_row = 
-                      case isLT col_idx m of
-                           (Yes prf_col) => do
-                             putChar (decideCellCharacter prf_col)
-                             let curVertex = createVertex n m row_idx col_idx {iOk=prf_row} {jOk=prf_col} 
-                             case isLT (S col_idx) m  of 
-                                  (Yes prf_next_col) => do
-                                    let nextVertex = createVertex n m row_idx (S col_idx) {iOk=prf_row} {jOk=prf_next_col}
+                  printColAtRow colIdx rowIdx prfRow = 
+                      case isLT colIdx m of
+                           (Yes prfCol) => do
+                             putChar (decideCellCharacter prfCol)
+                             let curVertex = createVertex n m rowIdx colIdx {iOk=prfRow} {jOk=prfCol} 
+                             case isLT (S colIdx) m  of 
+                                  (Yes prfNextCol) => do
+                                    let nextVertex = createVertex n m rowIdx (S colIdx) {iOk=prfRow} {jOk=prfNextCol}
                                     putChar (if elem (MkEdge curVertex nextVertex) edges then ' ' else '|')
                                   (No contra) => pure ()
-                             printColAtRow (S col_idx) row_idx prf_row
+                             printColAtRow (S colIdx) rowIdx prfRow
                            (No contra) => putChar '\n'
-                      where decideCellCharacter : LT col_idx m -> Char
-                            decideCellCharacter prf_col = 
-                              let curVertex = createVertex n m row_idx col_idx {iOk=prf_row} {jOk=prf_col} in
+                      where decideCellCharacter : LT colIdx m -> Char
+                            decideCellCharacter prfCol = 
+                              let curVertex = createVertex n m rowIdx colIdx {iOk=prfRow} {jOk=prfCol} in
                               let distToStart = index (vertexToFin curVertex) distFromStart in
                               let distToEnd = index (vertexToFin curVertex) distFromEnd
                               in 
